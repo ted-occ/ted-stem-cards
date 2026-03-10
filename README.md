@@ -1,36 +1,87 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# STEAM Cards
+
+NFCカードを使って、子供たちが「触れる」プログラミング体験ができるSTEAM教育アプリです。
+
+物理的なNFCカードをリーダーにかざすだけで、画面上のロボットに命令を送ることができます。
+
+## Game Modes
+
+### Maze Mode
+
+迷路をプログラミングでゴールまで導くモードです。
+NFCカードをかざしてアクションを追加し、ロボットをSTARTからGOALへナビゲートします。
+一人称視点でも迷路を体験できます。
+
+### Draw Mode
+
+コードで絵を描くモードです。アクションカードを組み合わせてキャンバス上に模様を描きます。
+
+### Line Mode
+
+線を描いてロボットを動かすモードです。自分で描いた線の上をロボットが自動でたどります。
+
+### Demo
+
+マルチプレイヤーアニメーションのデモモードです。
+
+### NFC Writer
+
+NFCタグにアクションカードのデータを書き込むツールです。白無地のNTAGカードからオリジナルのアクションカードを作成できます。
+
+## NFC Action Cards
+
+| カード | ID | 説明 |
+|--------|-----|------|
+| ⬆ Forward | `FORWARD` | 前に進む |
+| ⬇ Back | `BACK` | 後ろに下がる |
+| ↻ Turn Right | `TURN_RIGHT` | 右を向く |
+| ↺ Turn Left | `TURN_LEFT` | 左を向く |
+| 🔁 2回 | `LOOP_2` | 2回くり返し |
+| 🔁 3回 | `LOOP_3` | 3回くり返し |
+| 🔁 4回 | `LOOP_4` | 4回くり返し |
+| 🔁 5回 | `LOOP_5` | 5回くり返し |
+| 🏁 おわり | `END` | くり返しの終了 |
+
+## Requirements
+
+- Node.js 18+
+- USB NFCカードリーダー（動作確認済: SONY RC-S300）
+- NFC タグ（NTAG213 / NTAG215 / NTAG216）
 
 ## Getting Started
 
-First, run the development server:
-
 ```bash
+# Install dependencies
+npm install
+
+# Start development server
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+http://localhost:3000 を開いてください。
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### NFC カードの作成
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+1. `/nfc` ページを開く
+2. 書き込みたいアクションカードを選択
+3. 「書き込む」ボタンを押す
+4. 白無地のNTAGカードをリーダーにかざす
 
-## Learn More
+### Maze Mode で遊ぶ
 
-To learn more about Next.js, take a look at the following resources:
+1. `/game` ページを開く（ヘッダーの NFC インジケーターが緑になることを確認）
+2. 作成したNFCアクションカードをリーダーにかざす
+3. プログラムにアクションが自動追加される
+4. 「Action!」ボタンでプログラムを実行
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Tech Stack
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- [Next.js](https://nextjs.org/) 16 (App Router / Turbopack)
+- [React](https://react.dev/) 19
+- [Tailwind CSS](https://tailwindcss.com/) 4
+- [nfc-pcsc](https://github.com/nicedoc/nfc-pcsc) (PC/SC NFC reader)
+- TypeScript 5
 
-## Deploy on Vercel
+## License
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+MIT
