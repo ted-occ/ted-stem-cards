@@ -1,91 +1,41 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { NFC } from "nfc-pcsc";
+let NFC: any;
+try { NFC = require("nfc-pcsc").NFC; } catch { /* not available on Vercel */ }
+const db = (() => {
+  try { return require("./db") as typeof import("./db"); } catch { return null; }
+})()
+const loadCards = db?.loadCards ?? (() => new Map<string, string>());
+const upsertCard = db?.upsertCard ?? (() => {});
+const deleteCard = db?.deleteCard ?? (() => {});
 
-// ---- NDEF helpers for NTAG213/215/216 ----
+// ---- UID-based card mapping (backed by SQLite) ----
+// In-memory cache loaded from DB at startup
+let uidMap: Map<string, string> | null = null;
 
-/** Build an NDEF Text record with "en" language code. */
-function buildNdefText(text: string): Buffer {
-  const langCode = Buffer.from("en", "ascii"); // 2 bytes
-  const textBuf = Buffer.from(text, "utf-8");
-  const payloadLen = 1 + langCode.length + textBuf.length; // status + lang + text
-
-  // NDEF record: MB=1 ME=1 CF=0 SR=1 IL=0 TNF=001 → 0xD1
-  const record = Buffer.alloc(3 + 1 + payloadLen);
-  let off = 0;
-  record[off++] = 0xd1;           // header flags
-  record[off++] = 0x01;           // type length = 1
-  record[off++] = payloadLen;     // payload length (SR)
-  record[off++] = 0x54;           // type = "T"
-  record[off++] = langCode.length; // status byte (UTF-8, lang len)
-  langCode.copy(record, off); off += langCode.length;
-  textBuf.copy(record, off);
-
-  return record;
-}
-
-/** Wrap an NDEF message in TLV for NTAG user memory (starting at page 4). */
-function wrapNdefTlv(ndefMessage: Buffer): Buffer {
-  // TLV: 03 [len] [ndef] FE
-  const tlv = Buffer.alloc(2 + ndefMessage.length + 1);
-  tlv[0] = 0x03; // NDEF Message TLV
-  tlv[1] = ndefMessage.length;
-  ndefMessage.copy(tlv, 2);
-  tlv[2 + ndefMessage.length] = 0xfe; // Terminator TLV
-
-  // Pad to multiple of 4 bytes (NTAG page size)
-  const padded = Buffer.alloc(Math.ceil(tlv.length / 4) * 4);
-  tlv.copy(padded);
-  return padded;
-}
-
-/** Parse NDEF Text record from raw NTAG user memory (pages 4+). */
-function parseNdefText(data: Buffer): string | null {
-  // Find NDEF Message TLV: 03 [len] [message...]
-  let i = 0;
-  while (i < data.length) {
-    const type = data[i];
-    if (type === 0x00) { i++; continue; }          // NULL TLV
-    if (type === 0xfe) break;                       // Terminator TLV
-    if (type === 0x03) {                            // NDEF Message TLV
-      const len = data[i + 1];
-      const msg = data.subarray(i + 2, i + 2 + len);
-      return parseNdefRecord(msg);
-    }
-    // Skip unknown TLV
-    const len = data[i + 1];
-    i += 2 + len;
+function getUidMap(): Map<string, string> {
+  if (!uidMap) {
+    uidMap = loadCards();
+    console.log(`[NFC] Loaded ${uidMap.size} card(s) from database`);
   }
-  return null;
+  return uidMap;
 }
 
-function parseNdefRecord(msg: Buffer): string | null {
-  if (msg.length < 4) return null;
-  const header = msg[0];
-  const typeLen = msg[1];
-  const sr = (header & 0x10) !== 0; // Short Record flag
-  const payloadLen = sr ? msg[2] : msg.readUInt32BE(2);
-  const typeOffset = sr ? 3 : 6;
-  const type = msg.subarray(typeOffset, typeOffset + typeLen);
-  const payloadOffset = typeOffset + typeLen;
-  const payload = msg.subarray(payloadOffset, payloadOffset + payloadLen);
+export function registerCard(uid: string, cardId: string): void {
+  getUidMap().set(uid, cardId);
+  upsertCard(uid, cardId);
+  console.log(`[NFC] Registered UID=${uid} → ${cardId}`);
+}
 
-  // Text record: type = "T" (0x54)
-  if (type.length === 1 && type[0] === 0x54 && payload.length > 0) {
-    const statusByte = payload[0];
-    const langLen = statusByte & 0x3f;
-    const text = payload.subarray(1 + langLen).toString("utf-8");
-    return text;
-  }
-  return null;
+export function getRegisteredCards(): Array<{ uid: string; cardId: string }> {
+  return Array.from(getUidMap().entries()).map(([uid, cardId]) => ({ uid, cardId }));
+}
+
+export function removeCard(uid: string): void {
+  getUidMap().delete(uid);
+  deleteCard(uid);
 }
 
 // ---- Singleton NFC manager ----
-
-interface WriteRequest {
-  cardId: string;
-  resolve: (info: { uid: string }) => void;
-  reject: (err: Error) => void;
-}
 
 export interface NfcReadEvent {
   cardId: string;
@@ -96,14 +46,21 @@ export interface NfcReadEvent {
 let nfc: any = null;
 let activeReader: any = null;
 let readerName: string = "";
-let pendingWrite: WriteRequest | null = null;
 
 // Read event queue — consumers poll and drain this
 let readEvents: NfcReadEvent[] = [];
 let lastSeenUid: string = "";
 
+// Registration mode: when set, next card tap registers with this cardId
+let pendingRegister: {
+  cardId: string;
+  resolve: (info: { uid: string }) => void;
+  reject: (err: Error) => void;
+} | null = null;
+
 function ensureNfc() {
   if (nfc) return;
+  if (!NFC) return; // nfc-pcsc not available (e.g. Vercel)
   nfc = new NFC();
 
   nfc.on("reader", (reader: any) => {
@@ -112,49 +69,35 @@ function ensureNfc() {
     console.log(`[NFC] Reader connected: ${readerName}`);
 
     reader.on("card", async (card: any) => {
-      console.log(`[NFC] Card detected: UID=${card.uid}, ATR=${card.atr?.toString("hex")}`);
+      console.log(`[NFC] Card detected: UID=${card.uid}`);
 
-      // --- Write mode ---
-      if (pendingWrite) {
-        const req = pendingWrite;
-        pendingWrite = null;
+      // --- NDEF write mode ---
+      if (await handlePendingWrite(reader, card)) return;
 
-        try {
-          const ndef = buildNdefText(req.cardId);
-          const data = wrapNdefTlv(ndef);
-          await reader.write(4, data, 4);
-          console.log(`[NFC] Written "${req.cardId}" (${data.length} bytes) to UID=${card.uid}`);
-          req.resolve({ uid: card.uid });
-        } catch (err: any) {
-          console.error(`[NFC] Write error:`, err);
-          req.reject(new Error(err.message ?? String(err)));
-        }
+      // --- Registration mode ---
+      if (pendingRegister) {
+        const req = pendingRegister;
+        pendingRegister = null;
+        registerCard(card.uid, req.cardId);
+        req.resolve({ uid: card.uid });
         return;
       }
 
       // --- Read mode (default) ---
-      // Deduplicate: ignore the same UID until it's removed
       if (card.uid === lastSeenUid) return;
       lastSeenUid = card.uid;
 
-      try {
-        // Read 16 pages (64 bytes) from page 4 — enough for our short NDEF records
-        const data = await reader.read(4, 64, 4);
-        const text = parseNdefText(data);
-        if (text) {
-          console.log(`[NFC] Read "${text}" from UID=${card.uid}`);
-          readEvents.push({ cardId: text, uid: card.uid, timestamp: Date.now() });
-        } else {
-          console.log(`[NFC] No NDEF text found on UID=${card.uid}`);
-        }
-      } catch (err: any) {
-        console.error(`[NFC] Read error:`, err);
+      const cardId = getUidMap().get(card.uid);
+      if (cardId) {
+        console.log(`[NFC] Matched UID=${card.uid} → ${cardId}`);
+        readEvents.push({ cardId, uid: card.uid, timestamp: Date.now() });
+      } else {
+        console.log(`[NFC] Unknown card UID=${card.uid} (not registered)`);
       }
     });
 
     reader.on("card.off", (card: any) => {
       console.log(`[NFC] Card removed: UID=${card.uid}`);
-      // Clear lastSeenUid so the same card can be read again after removal
       if (card.uid === lastSeenUid) {
         lastSeenUid = "";
       }
@@ -184,7 +127,7 @@ export function getStatus(): { connected: boolean; readerName: string; waiting: 
   return {
     connected: activeReader !== null,
     readerName,
-    waiting: pendingWrite !== null,
+    waiting: pendingRegister !== null,
   };
 }
 
@@ -197,31 +140,30 @@ export function drainReadEvents(): NfcReadEvent[] {
 }
 
 /**
- * Queue a write request. Resolves when a tag is presented and written.
- * Rejects on timeout or write error.
+ * Queue a registration request. Resolves when a card is tapped.
+ * The card's UID will be mapped to the given cardId.
  */
-export function writeTag(cardId: string, timeoutMs = 30000): Promise<{ uid: string }> {
+export function registerNextCard(cardId: string, timeoutMs = 30000): Promise<{ uid: string }> {
   ensureNfc();
 
   if (!activeReader) {
     return Promise.reject(new Error("NFCリーダーが接続されていません。"));
   }
 
-  // Cancel any existing pending write
-  if (pendingWrite) {
-    pendingWrite.reject(new Error("新しい書き込みリクエストで上書きされました。"));
-    pendingWrite = null;
+  if (pendingRegister) {
+    pendingRegister.reject(new Error("新しい登録リクエストで上書きされました。"));
+    pendingRegister = null;
   }
 
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
-      if (pendingWrite?.cardId === cardId) {
-        pendingWrite = null;
-        reject(new Error("タイムアウト: タグが検出されませんでした。"));
+      if (pendingRegister?.cardId === cardId) {
+        pendingRegister = null;
+        reject(new Error("タイムアウト: カードが検出されませんでした。"));
       }
     }, timeoutMs);
 
-    pendingWrite = {
+    pendingRegister = {
       cardId,
       resolve: (info) => {
         clearTimeout(timer);
@@ -235,10 +177,126 @@ export function writeTag(cardId: string, timeoutMs = 30000): Promise<{ uid: stri
   });
 }
 
+/** Cancel any pending registration. */
+export function cancelRegister(): void {
+  if (pendingRegister) {
+    pendingRegister.reject(new Error("キャンセルされました。"));
+    pendingRegister = null;
+  }
+}
+
+// ---- NDEF URL write to NTAG ----
+
+let pendingWrite: {
+  url: string;
+  resolve: () => void;
+  reject: (err: Error) => void;
+} | null = null;
+
+/**
+ * Build an NDEF message containing a single URI record.
+ * Uses URI prefix 0x04 ("https://") if the url starts with "https://",
+ * otherwise 0x03 ("http://"), otherwise 0x00 (no prefix).
+ */
+function buildNdefUrlMessage(url: string): Buffer {
+  let prefixCode = 0x00;
+  let uriBody = url;
+  if (url.startsWith("https://")) {
+    prefixCode = 0x04;
+    uriBody = url.slice(8);
+  } else if (url.startsWith("http://")) {
+    prefixCode = 0x03;
+    uriBody = url.slice(7);
+  }
+
+  const uriBytes = Buffer.from(uriBody, "utf8");
+  const payloadLength = 1 + uriBytes.length; // prefix byte + uri
+
+  // NDEF record: MB|ME|SR|TNF=well-known(1) = 0xD1
+  const record = Buffer.alloc(3 + 1 + payloadLength);
+  record[0] = 0xd1; // flags
+  record[1] = 0x01; // type length
+  record[2] = payloadLength; // payload length (short record)
+  record[3] = 0x55; // type = 'U' (URI)
+  record[4] = prefixCode;
+  uriBytes.copy(record, 5);
+
+  // TLV wrapper: 0x03, length, record, 0xFE terminator
+  const tlv = Buffer.alloc(2 + record.length + 1);
+  tlv[0] = 0x03; // NDEF message TLV
+  tlv[1] = record.length;
+  record.copy(tlv, 2);
+  tlv[2 + record.length] = 0xfe; // terminator
+
+  return tlv;
+}
+
+/**
+ * Write an NDEF URL record to the next tapped NTAG card.
+ * Pages are 4 bytes; NDEF data starts at page 4.
+ */
+export function writeNdefUrl(url: string, timeoutMs = 30000): Promise<void> {
+  ensureNfc();
+
+  if (!activeReader) {
+    return Promise.reject(new Error("NFCリーダーが接続されていません。"));
+  }
+
+  if (pendingWrite) {
+    pendingWrite.reject(new Error("新しい書き込みリクエストで上書きされました。"));
+    pendingWrite = null;
+  }
+
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      if (pendingWrite) {
+        pendingWrite = null;
+        reject(new Error("タイムアウト: カードが検出されませんでした。"));
+      }
+    }, timeoutMs);
+
+    pendingWrite = {
+      url,
+      resolve: () => { clearTimeout(timer); resolve(); },
+      reject: (err) => { clearTimeout(timer); reject(err); },
+    };
+  });
+}
+
 /** Cancel any pending write. */
 export function cancelWrite(): void {
   if (pendingWrite) {
     pendingWrite.reject(new Error("キャンセルされました。"));
     pendingWrite = null;
   }
+}
+
+/** Internal: called from card event to handle pending write */
+async function handlePendingWrite(reader: any, card: any): Promise<boolean> {
+  if (!pendingWrite) return false;
+
+  const req = pendingWrite;
+  pendingWrite = null;
+
+  try {
+    const ndefData = buildNdefUrlMessage(req.url);
+    const PAGE_SIZE = 4;
+    const startPage = 4; // NTAG user data starts at page 4
+
+    // Write 4 bytes at a time
+    for (let offset = 0; offset < ndefData.length; offset += PAGE_SIZE) {
+      const page = startPage + offset / PAGE_SIZE;
+      const chunk = Buffer.alloc(PAGE_SIZE, 0);
+      ndefData.copy(chunk, 0, offset, Math.min(offset + PAGE_SIZE, ndefData.length));
+      await reader.write(page, chunk, PAGE_SIZE);
+    }
+
+    console.log(`[NFC] NDEF URL written to card UID=${card.uid}: ${req.url}`);
+    req.resolve();
+  } catch (err: any) {
+    console.error(`[NFC] NDEF write failed:`, err);
+    req.reject(new Error(`書き込みに失敗しました: ${err.message || err}`));
+  }
+
+  return true;
 }

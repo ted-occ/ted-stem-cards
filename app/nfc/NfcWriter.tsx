@@ -2,64 +2,43 @@
 
 import { useState, useCallback, useEffect, useRef } from "react";
 import Link from "next/link";
+import { useI18n } from "@/lib/i18n";
 
-// --- Card definitions matching the game ---
-interface CardDef {
+interface ActionDef {
   id: string;
-  label: string;
+  labelKey: "dirUp" | "dirDown" | "dirLeft" | "dirRight" | "dirJump" | "dirX2" | "dirX3" | "dirBranch";
   icon: string;
   bgColor: string;
   borderColor: string;
-  hoverColor: string;
   textColor: string;
 }
 
-const ACTION_CARDS: CardDef[] = [
-  { id: "FORWARD",    label: "Forward",    icon: "⬆", bgColor: "bg-blue-100",   borderColor: "border-blue-400",   hoverColor: "hover:bg-blue-200",   textColor: "text-blue-700" },
-  { id: "BACK",       label: "Back",       icon: "⬇", bgColor: "bg-orange-100", borderColor: "border-orange-400", hoverColor: "hover:bg-orange-200", textColor: "text-orange-700" },
-  { id: "TURN_RIGHT", label: "Turn Right", icon: "↻", bgColor: "bg-green-100",  borderColor: "border-green-400",  hoverColor: "hover:bg-green-200",  textColor: "text-green-700" },
-  { id: "TURN_LEFT",  label: "Turn Left",  icon: "↺", bgColor: "bg-purple-100", borderColor: "border-purple-400", hoverColor: "hover:bg-purple-200", textColor: "text-purple-700" },
+const ACTIONS: ActionDef[] = [
+  { id: "UP",     labelKey: "dirUp",     icon: "⬆",  bgColor: "bg-blue-100",   borderColor: "border-blue-400",   textColor: "text-blue-700" },
+  { id: "DOWN",   labelKey: "dirDown",   icon: "⬇",  bgColor: "bg-orange-100", borderColor: "border-orange-400", textColor: "text-orange-700" },
+  { id: "LEFT",   labelKey: "dirLeft",   icon: "⬅",  bgColor: "bg-purple-100", borderColor: "border-purple-400", textColor: "text-purple-700" },
+  { id: "RIGHT",  labelKey: "dirRight",  icon: "➡",  bgColor: "bg-green-100",  borderColor: "border-green-400",  textColor: "text-green-700" },
+  { id: "JUMP",   labelKey: "dirJump",   icon: "⤴",  bgColor: "bg-yellow-100", borderColor: "border-yellow-400", textColor: "text-yellow-700" },
+  { id: "X2",     labelKey: "dirX2",     icon: "×2", bgColor: "bg-pink-100",   borderColor: "border-pink-400",   textColor: "text-pink-700" },
+  { id: "X3",     labelKey: "dirX3",     icon: "×3", bgColor: "bg-red-100",    borderColor: "border-red-400",    textColor: "text-red-700" },
+  { id: "BRANCH", labelKey: "dirBranch", icon: "❓", bgColor: "bg-violet-100", borderColor: "border-violet-400", textColor: "text-violet-700" },
 ];
 
-const LOOP_CARDS: CardDef[] = [2, 3, 4, 5].map((n) => ({
-  id: `LOOP_${n}`,
-  label: `${n}回`,
-  icon: "🔁",
-  bgColor: "bg-cyan-100",
-  borderColor: "border-cyan-400",
-  hoverColor: "hover:bg-cyan-200",
-  textColor: "text-cyan-700",
-}));
-
-const END_CARD: CardDef = {
-  id: "END",
-  label: "おわり",
-  icon: "🏁",
-  bgColor: "bg-gray-100",
-  borderColor: "border-gray-400",
-  hoverColor: "hover:bg-gray-200",
-  textColor: "text-gray-700",
-};
-
-type WriteStatus = "idle" | "waiting" | "success" | "error";
-
-interface WriteLog {
-  cardId: string;
-  label: string;
+interface RegisteredCard {
   uid: string;
-  time: string;
+  cardId: string;
 }
 
 export default function NfcWriter() {
-  const [selected, setSelected] = useState<CardDef | null>(null);
-  const [status, setStatus] = useState<WriteStatus>("idle");
-  const [message, setMessage] = useState("");
+  const { t } = useI18n();
   const [readerConnected, setReaderConnected] = useState(false);
   const [readerName, setReaderName] = useState("");
-  const [logs, setLogs] = useState<WriteLog[]>([]);
+  const [registeredCards, setRegisteredCards] = useState<RegisteredCard[]>([]);
+  const [registeringId, setRegisteringId] = useState<string | null>(null);
+  const [resultMessage, setResultMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
-  // Poll reader status
+  // Poll reader status + registered cards
   useEffect(() => {
     let cancelled = false;
     const poll = async () => {
@@ -70,6 +49,7 @@ export default function NfcWriter() {
         if (!cancelled) {
           setReaderConnected(data.connected);
           setReaderName(data.readerName || "");
+          setRegisteredCards(data.cards || []);
         }
       } catch {
         // ignore
@@ -80,76 +60,61 @@ export default function NfcWriter() {
     return () => { cancelled = true; clearInterval(id); };
   }, []);
 
-  const handleSelect = useCallback((card: CardDef) => {
-    setSelected(card);
-    setStatus("idle");
-    setMessage("");
-  }, []);
+  const getCardUid = useCallback(
+    (actionId: string) => registeredCards.find((c) => c.cardId === actionId)?.uid,
+    [registeredCards],
+  );
 
-  const handleWrite = useCallback(async () => {
-    if (!selected) return;
-
-    // Cancel previous request
+  const handleRegister = useCallback(async (action: ActionDef) => {
     if (abortRef.current) abortRef.current.abort();
     const ac = new AbortController();
     abortRef.current = ac;
 
-    try {
-      setStatus("waiting");
-      setMessage("NFCタグをリーダーにかざしてください...");
+    setRegisteringId(action.id);
+    setResultMessage(null);
 
+    try {
       const res = await fetch("/api/nfc", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cardId: selected.id }),
+        body: JSON.stringify({ cardId: action.id }),
         signal: ac.signal,
       });
-
       const data = await res.json();
-
       if (data.success) {
-        setStatus("success");
-        setMessage(`「${selected.label}」を書き込みました！ (UID: ${data.uid})`);
-        setLogs((prev) => [
-          { cardId: selected.id, label: selected.label, uid: data.uid, time: new Date().toLocaleTimeString() },
-          ...prev,
-        ]);
+        setResultMessage({ type: "success", text: `${t(action.labelKey)} — UID: ${data.uid}` });
       } else {
-        setStatus("error");
-        setMessage(data.error || "書き込みに失敗しました。");
+        setResultMessage({ type: "error", text: data.error || t("registerFailed") });
       }
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
-      setStatus("error");
-      setMessage(`通信エラー: ${err instanceof Error ? err.message : String(err)}`);
+      setResultMessage({ type: "error", text: `${t("commError")}${err instanceof Error ? err.message : String(err)}` });
+    } finally {
+      setRegisteringId(null);
     }
-  }, [selected]);
+  }, [t]);
 
   const handleCancel = useCallback(async () => {
     if (abortRef.current) abortRef.current.abort();
-    try {
-      await fetch("/api/nfc", { method: "DELETE" });
-    } catch {
-      // ignore
-    }
-    setStatus("idle");
-    setMessage("");
+    try { await fetch("/api/nfc", { method: "DELETE" }); } catch { /* ignore */ }
+    setRegisteringId(null);
+    setResultMessage(null);
   }, []);
+
+  const allRegistered = ACTIONS.every((a) => getCardUid(a.id));
 
   return (
     <div className="min-h-screen bg-stone-50 p-6">
-      <div className="max-w-3xl mx-auto">
+      <div className="max-w-2xl mx-auto">
         {/* Header */}
         <div className="flex items-center gap-4 mb-6">
           <Link
             href="/"
-            className="px-4 py-2 rounded-lg border border-gray-300 bg-white hover:bg-gray-50 text-sm"
+            className="px-4 py-2 rounded-lg border border-gray-300 bg-white hover:bg-gray-50 text-sm text-gray-700"
           >
-            ← メニュー
+            {t("goBack")}
           </Link>
-          <h1 className="text-2xl font-bold text-gray-800">
-            📡 NFC カード書き込み
-          </h1>
+          <h1 className="text-2xl font-bold text-gray-800">{t("nfcCardSetup")}</h1>
         </div>
 
         {/* Reader status */}
@@ -160,148 +125,76 @@ export default function NfcWriter() {
           }`}
         >
           <span className={`inline-block w-3 h-3 rounded-full ${readerConnected ? "bg-green-500 animate-pulse" : "bg-red-400"}`} />
-          {readerConnected
-            ? `リーダー接続中: ${readerName}`
-            : "NFCリーダーが見つかりません — USBリーダーを接続してください"
-          }
+          {readerConnected ? `${t("readerConnected")}${readerName}` : t("readerNotFound")}
         </div>
 
-        {/* Step 1: Select card */}
-        <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6 shadow-sm">
-          <h2 className="text-lg font-bold text-gray-700 mb-4">
-            ① カードの種類を選択
-          </h2>
-
-          <p className="text-sm font-semibold text-gray-500 mb-2">ACTION CARDS</p>
-          <div className="flex flex-wrap gap-3 mb-4">
-            {ACTION_CARDS.map((card) => (
-              <button
-                key={card.id}
-                onClick={() => handleSelect(card)}
-                className={`flex flex-col items-center justify-center w-24 h-24 rounded-xl border-2 transition-all font-bold text-sm
-                  ${card.bgColor} ${card.borderColor} ${card.hoverColor}
-                  ${selected?.id === card.id ? "ring-4 ring-blue-300 scale-105" : ""}
-                `}
-              >
-                <span className="text-2xl mb-1">{card.icon}</span>
-                <span className={card.textColor}>{card.label}</span>
-              </button>
-            ))}
+        {/* Result message */}
+        {resultMessage && (
+          <div className={`px-4 py-3 rounded-xl mb-6 text-sm font-medium text-center
+            ${resultMessage.type === "success" ? "bg-green-100 text-green-700 border border-green-300" : "bg-red-100 text-red-700 border border-red-300"}
+          `}>
+            {resultMessage.text}
           </div>
+        )}
 
-          <p className="text-sm font-semibold text-gray-500 mb-2">くり返しカード</p>
-          <div className="flex flex-wrap gap-3 mb-4">
-            {LOOP_CARDS.map((card) => (
-              <button
-                key={card.id}
-                onClick={() => handleSelect(card)}
-                className={`flex flex-col items-center justify-center w-20 h-20 rounded-xl border-2 transition-all font-bold text-sm
-                  ${card.bgColor} ${card.borderColor} ${card.hoverColor}
-                  ${selected?.id === card.id ? "ring-4 ring-blue-300 scale-105" : ""}
-                `}
-              >
-                <span className="text-lg mb-1">{card.icon}</span>
-                <span className={card.textColor}>{card.label}</span>
-              </button>
-            ))}
+        {/* Progress indicator */}
+        <div className="flex items-center gap-2 mb-4">
+          <div className="flex-1 h-2 bg-gray-200 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-green-500 transition-all duration-300 rounded-full"
+              style={{ width: `${(ACTIONS.filter((a) => getCardUid(a.id)).length / ACTIONS.length) * 100}%` }}
+            />
           </div>
-
-          <p className="text-sm font-semibold text-gray-500 mb-2">その他</p>
-          <div className="flex gap-3">
-            <button
-              onClick={() => handleSelect(END_CARD)}
-              className={`flex flex-col items-center justify-center w-24 h-20 rounded-xl border-2 transition-all font-bold text-sm
-                ${END_CARD.bgColor} ${END_CARD.borderColor} ${END_CARD.hoverColor}
-                ${selected?.id === END_CARD.id ? "ring-4 ring-blue-300 scale-105" : ""}
-              `}
-            >
-              <span className="text-lg mb-1">{END_CARD.icon}</span>
-              <span className={END_CARD.textColor}>{END_CARD.label}</span>
-            </button>
-          </div>
+          <span className="text-sm text-gray-500 font-medium">
+            {ACTIONS.filter((a) => getCardUid(a.id)).length} / {ACTIONS.length}
+          </span>
         </div>
 
-        {/* Step 2: Write */}
-        <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6 shadow-sm">
-          <h2 className="text-lg font-bold text-gray-700 mb-4">
-            ② NFCタグに書き込む
-          </h2>
+        {/* Action cards — tile grid */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+          {ACTIONS.map((action) => {
+            const uid = getCardUid(action.id);
+            const isRegistering = registeringId === action.id;
 
-          {selected ? (
-            <div className="flex flex-col items-center gap-4">
+            return (
               <div
-                className={`flex flex-col items-center justify-center w-32 h-32 rounded-2xl border-3 font-bold
-                  ${selected.bgColor} ${selected.borderColor}
-                `}
+                key={action.id}
+                className={`flex flex-col items-center gap-2 px-3 py-4 rounded-xl border-2 transition-all ${
+                  uid ? `${action.bgColor} ${action.borderColor}` : "bg-white border-gray-200"
+                } ${isRegistering ? "ring-4 ring-yellow-300 animate-pulse" : ""}`}
               >
-                <span className="text-4xl mb-2">{selected.icon}</span>
-                <span className={`text-lg ${selected.textColor}`}>{selected.label}</span>
-                <span className="text-xs text-gray-400 mt-1">{selected.id}</span>
-              </div>
-
-              <div className="flex gap-3">
-                <button
-                  onClick={handleWrite}
-                  disabled={status === "waiting" || !readerConnected}
-                  className={`px-8 py-3 rounded-xl font-bold text-lg transition-all
-                    ${status === "waiting"
-                      ? "bg-yellow-400 text-yellow-900 animate-pulse"
-                      : "bg-blue-500 text-white hover:bg-blue-600 active:scale-95"
-                    }
-                    disabled:opacity-60 disabled:cursor-not-allowed
-                  `}
-                >
-                  {status === "waiting" ? "📡 タグを待っています..." : "📝 書き込む"}
-                </button>
-
-                {status === "waiting" && (
+                <span className="text-4xl">{action.icon}</span>
+                <span className={`text-sm font-bold text-center ${uid ? action.textColor : "text-gray-400"}`}>
+                  {t(action.labelKey)}
+                </span>
+                {uid && (
+                  <span className="text-[10px] text-gray-400 font-mono truncate max-w-full">{uid}</span>
+                )}
+                {isRegistering ? (
                   <button
                     onClick={handleCancel}
-                    className="px-4 py-3 rounded-xl font-bold text-sm bg-gray-200 text-gray-600 hover:bg-gray-300 transition-all"
+                    className="w-full px-3 py-1.5 rounded-lg text-xs font-medium bg-gray-200 text-gray-600 hover:bg-gray-300 transition"
                   >
-                    キャンセル
+                    {t("cancel")}
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => handleRegister(action)}
+                    disabled={!readerConnected || registeringId !== null}
+                    className={`w-full px-3 py-1.5 rounded-lg text-xs font-bold transition disabled:opacity-40 disabled:cursor-not-allowed ${
+                      uid
+                        ? "bg-white/80 text-gray-600 hover:bg-white border border-gray-300"
+                        : "bg-blue-500 text-white hover:bg-blue-600"
+                    }`}
+                  >
+                    {uid ? t("reRegister") : t("tapToRegister")}
                   </button>
                 )}
               </div>
-
-              {message && (
-                <div
-                  className={`px-4 py-3 rounded-lg text-sm font-medium w-full text-center
-                    ${status === "success" ? "bg-green-100 text-green-700 border border-green-300" : ""}
-                    ${status === "error" ? "bg-red-100 text-red-700 border border-red-300" : ""}
-                    ${status === "waiting" ? "bg-yellow-50 text-yellow-700 border border-yellow-300" : ""}
-                  `}
-                >
-                  {message}
-                </div>
-              )}
-            </div>
-          ) : (
-            <p className="text-gray-400 text-center py-8">
-              上からカードの種類を選んでください
-            </p>
-          )}
+            );
+          })}
         </div>
 
-        {/* Write log */}
-        {logs.length > 0 && (
-          <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
-            <h2 className="text-lg font-bold text-gray-700 mb-3">📋 書き込み履歴</h2>
-            <div className="space-y-2">
-              {logs.map((log, i) => (
-                <div
-                  key={i}
-                  className="flex items-center gap-3 px-3 py-2 bg-gray-50 rounded-lg text-sm"
-                >
-                  <span className="text-gray-400 text-xs">{log.time}</span>
-                  <span className="font-bold text-gray-700">{log.label}</span>
-                  <span className="text-gray-400">({log.cardId})</span>
-                  <span className="ml-auto text-xs text-gray-400 font-mono">UID: {log.uid}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );

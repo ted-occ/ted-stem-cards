@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getStatus, writeTag, cancelWrite } from "@/lib/nfc";
+import { getStatus, registerNextCard, cancelRegister, getRegisteredCards } from "@/lib/nfc";
 
-/** GET /api/nfc — reader status */
+/** GET /api/nfc — reader status + registered cards */
 export async function GET() {
   const status = getStatus();
-  return NextResponse.json(status);
+  const cards = getRegisteredCards();
+  return NextResponse.json({ ...status, cards });
 }
 
-/** POST /api/nfc — write card ID to NFC tag */
+/** POST /api/nfc — register a card (tap to associate UID with cardId) */
 export async function POST(req: NextRequest) {
   const body = await req.json();
   const cardId = body.cardId as string | undefined;
@@ -17,7 +18,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const result = await writeTag(cardId, 30000);
+    const result = await registerNextCard(cardId, 30000);
     return NextResponse.json({ success: true, uid: result.uid, cardId });
   } catch (err) {
     return NextResponse.json(
@@ -27,8 +28,8 @@ export async function POST(req: NextRequest) {
   }
 }
 
-/** DELETE /api/nfc — cancel pending write */
+/** DELETE /api/nfc — cancel pending registration */
 export async function DELETE() {
-  cancelWrite();
+  cancelRegister();
   return NextResponse.json({ cancelled: true });
 }

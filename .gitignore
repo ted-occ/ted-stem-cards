@@ -36,6 +36,19 @@ yarn-error.log*
 # vercel
 .vercel
 
+# database
+/data/
+
+# portable node.js (Windows distribution)
+/node/
+
+# distribution zip
+*.zip
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# claude code (allow skills, ignore memory/settings)
+.claude/*
+!.claude/skills/
