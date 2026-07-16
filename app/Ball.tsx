@@ -13,6 +13,7 @@ import {
   encodeProgram,
   groupProgramForDisplay,
   displayStepsToFlat,
+  generateDemoWalk,
 } from "@/lib/ball-shared";
 import { SceneLighting, CameraController, Board, Ground, Sphere, CellMarker, TextSprite, ObstacleMarker, BranchMarker } from "@/app/components/Scene";
 import { playMove, playJump, playBump, playNfcScan, playSuccess, playBurst, playBranch } from "@/lib/sounds";
@@ -46,6 +47,14 @@ export default function Ball() {
   const [nfcConnected, setNfcConnected] = useState(false);
   const [nfcFlash, setNfcFlash] = useState<string | null>(null);
   const isAnimatingRef = useRef(false);
+
+  // Idle demo (attract mode): auto-play after 15s of inactivity on the initial screen
+  const [demoActive, setDemoActive] = useState(false);
+  const demoActiveRef = useRef(false);
+  const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isCleanInitialRef = useRef(false);
+  const runnerRef = useRef(runner);
+  useEffect(() => { runnerRef.current = runner; });
 
   // Programming mode
   const [progMode, setProgMode] = useState(false);
@@ -98,6 +107,91 @@ export default function Ball() {
   useEffect(() => { isAnimatingRef.current = isAnimating; }, [isAnimating]);
   const levelRef = useRef(level);
   useEffect(() => { levelRef.current = level; }, [level]);
+
+  // "Initial screen, nothing open, nothing moving" — the only state the idle demo may start from
+  const cleanInitial =
+    !level.active && !progMode && !progRunning &&
+    !showWelcome && !showInfo && !showSettings && !showNtagModal &&
+    !guide.helpOpen && !isAnimating && !jumping && !level.bursting;
+  useEffect(() => { isCleanInitialRef.current = cleanInitial; });
+
+  const armIdleTimer = useCallback(() => {
+    if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+    idleTimerRef.current = null;
+    if (!isCleanInitialRef.current || demoActiveRef.current) return;
+    idleTimerRef.current = setTimeout(() => startDemo(), 15000);
+  }, []);
+
+  const runDemoLoop = useCallback(async () => {
+    let pos = gridCenter(3);
+    setGridPos(pos);
+    await new Promise((r) => setTimeout(r, 300));
+    while (demoActiveRef.current) {
+      const steps = generateDemoWalk(pos, 3, 8);
+      const { finalPos } = await runnerRef.current.runSteps({
+        steps,
+        startPos: pos,
+        gridSize: 3,
+        obstacles: [],
+        shouldAbort: () => !demoActiveRef.current,
+      });
+      pos = finalPos;
+      if (!demoActiveRef.current) break;
+      await new Promise((r) => setTimeout(r, 600));
+      if (Math.random() < 0.25) {
+        pos = gridCenter(3);
+        setGridPos(pos);
+      }
+    }
+  }, []);
+
+  const startDemo = useCallback(() => {
+    if (demoActiveRef.current) return;
+    if (!isCleanInitialRef.current) { armIdleTimer(); return; }
+    demoActiveRef.current = true;
+    setDemoActive(true);
+    if (idleTimerRef.current) { clearTimeout(idleTimerRef.current); idleTimerRef.current = null; }
+    runDemoLoop();
+  }, [armIdleTimer, runDemoLoop]);
+
+  const stopDemo = useCallback(() => {
+    if (!demoActiveRef.current) return;
+    demoActiveRef.current = false;
+    setDemoActive(false);
+    setIsAnimating(false);
+    setJumping(false);
+    setGridPos(gridCenter(3));
+    armIdleTimer();
+  }, [armIdleTimer, setIsAnimating, setJumping, setGridPos]);
+
+  const onActivity = useCallback(() => {
+    if (demoActiveRef.current) stopDemo();
+    else armIdleTimer();
+  }, [stopDemo, armIdleTimer]);
+
+  // Re-arm whenever we enter/leave the clean initial screen, or the demo stops
+  useEffect(() => { armIdleTimer(); }, [cleanInitial, demoActive, armIdleTimer]);
+
+  // Pointer/touch activity resets or cancels the demo (keyboard is handled in handleKeyDown)
+  useEffect(() => {
+    const h = () => onActivity();
+    window.addEventListener("mousemove", h, { passive: true });
+    window.addEventListener("pointerdown", h, { passive: true });
+    window.addEventListener("click", h, { passive: true });
+    window.addEventListener("touchstart", h, { passive: true });
+    return () => {
+      window.removeEventListener("mousemove", h);
+      window.removeEventListener("pointerdown", h);
+      window.removeEventListener("click", h);
+      window.removeEventListener("touchstart", h);
+    };
+  }, [onActivity]);
+
+  // Stop the demo loop on unmount
+  useEffect(() => () => {
+    demoActiveRef.current = false;
+    if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+  }, []);
 
   // Consecutive branch counter for deadlock detection
   const branchChainRef = useRef(0);
@@ -267,6 +361,9 @@ export default function Ball() {
           const cardId = ev.cardId as string;
           if (!NFC_DIRECTIONS.includes(cardId as typeof NFC_DIRECTIONS[number])) continue;
 
+          // Demo (attract mode): any card tap just cancels the demo, doesn't move the ball
+          if (demoActiveRef.current) { stopDemo(); break; }
+
           // Programming mode: add to program instead of moving
           if (progModeRef.current && !progRunningRef.current) {
             setProgram((prev) => {
@@ -368,6 +465,9 @@ export default function Ball() {
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
+      // Demo (attract mode): any key just cancels the demo
+      if (demoActiveRef.current) { e.preventDefault(); stopDemo(); return; }
+      armIdleTimer();
       // Info overlay: intercept all keys while shown
       if (showInfo) {
         e.preventDefault();
@@ -556,7 +656,7 @@ export default function Ball() {
         return next;
       });
     },
-    [isAnimating, jumping, progMode, progRunning, program, runProgram, level, pBlockEditing, guide.toggleHelp, showInfo]
+    [isAnimating, jumping, progMode, progRunning, program, runProgram, level, pBlockEditing, guide.toggleHelp, showInfo, stopDemo, armIdleTimer]
   );
 
   useEffect(() => {
@@ -1220,6 +1320,15 @@ export default function Ball() {
           <div className="rounded-xl bg-white/90 px-4 py-3 shadow-xl backdrop-blur text-center animate-bounce">
             <div className="text-2xl">{NFC_ICONS[nfcFlash]}</div>
             <div className="text-xs font-bold text-gray-700">{nfcFlash}</div>
+          </div>
+        </div>
+      )}
+
+      {/* Idle demo banner */}
+      {demoActive && (
+        <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-30 pointer-events-none">
+          <div className="rounded-full bg-black/50 px-4 py-2 text-sm font-medium text-white/90 backdrop-blur animate-pulse">
+            {t("demoBanner")}
           </div>
         </div>
       )}
