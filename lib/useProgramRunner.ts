@@ -17,6 +17,8 @@ export interface RunConfig {
   reverseBranch?: boolean;
   /** Called each time a JUMP action executes (so move counters can update in real time) */
   onJump?: () => void;
+  /** Polled at each step boundary; when true, runSteps returns early at the current position */
+  shouldAbort?: () => boolean;
 }
 
 export interface RunResult {
@@ -122,7 +124,7 @@ export function useProgramRunner() {
 
   /** Run program steps with animations. Returns final position and passedGoal flag. */
   const runSteps = useCallback(async (config: RunConfig): Promise<RunResult> => {
-    const { steps, startPos, gridSize, obstacles, branchCells = [], isPassthrough, reverseBranch = false, onJump } = config;
+    const { steps, startPos, gridSize, obstacles, branchCells = [], isPassthrough, reverseBranch = false, onJump, shouldAbort } = config;
 
     setGridPos(startPos);
     setIsAnimating(false);
@@ -137,6 +139,8 @@ export function useProgramRunner() {
     const jumpCountRef = { value: 0 };
 
     for (let i = 0; i < expanded.length; i++) {
+      if (shouldAbort?.()) break;
+
       const token = expanded[i];
 
       // Skip structural P-block tokens
@@ -236,6 +240,7 @@ export function useProgramRunner() {
         }
       }
       await new Promise((r) => setTimeout(r, 200));
+      if (shouldAbort?.()) break;
     }
     setProgIndex(-1);
 

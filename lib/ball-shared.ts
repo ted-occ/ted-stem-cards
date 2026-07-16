@@ -109,6 +109,38 @@ export function moveGrid(
   return { col, row };
 }
 
+/** Generate a random free-roam walk (no goal) for the idle attract-mode demo.
+ *  Occasionally throws in a JUMP, avoids walls, and avoids immediately backtracking. */
+export function generateDemoWalk(
+  start: { col: number; row: number },
+  gridSize: number = 3,
+  length: number = 8,
+): string[] {
+  const DIRS: string[] = ["UP", "DOWN", "LEFT", "RIGHT"];
+  const OPPOSITE: Record<string, string> = { UP: "DOWN", DOWN: "UP", LEFT: "RIGHT", RIGHT: "LEFT" };
+  const path: string[] = [];
+  let pos = { ...start };
+  let lastDir: string | null = null;
+
+  for (let i = 0; i < length; i++) {
+    if (Math.random() < 0.15) {
+      path.push("JUMP");
+      continue;
+    }
+    const valid: string[] = DIRS.filter((d) => moveGrid(pos, d, gridSize) !== null);
+    if (valid.length === 0) continue;
+    const dirToAvoid = lastDir !== null ? OPPOSITE[lastDir] : null;
+    const preferred: string[] = dirToAvoid ? valid.filter((d) => d !== dirToAvoid) : valid;
+    const candidates = preferred.length > 0 ? preferred : valid;
+    const dir = candidates[Math.floor(Math.random() * candidates.length)];
+    path.push(dir);
+    pos = moveGrid(pos, dir, gridSize)!;
+    lastDir = dir;
+  }
+
+  return path;
+}
+
 /** Generate a random path from start to goal on the 3x3 grid.
  *  Sometimes takes detours to make it more interesting. */
 export function generateRandomPath(

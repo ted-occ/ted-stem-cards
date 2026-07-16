@@ -6,6 +6,11 @@ export type Locale = "ja" | "en" | "es";
 
 const translations = {
   // Ball.tsx
+  demoBanner: {
+    ja: "デモ再生中 — 何か操作すると戻ります",
+    en: "Demo mode — press any key or move to exit",
+    es: "Modo demo — pulsa una tecla o muévete para salir",
+  },
   checker: { ja: "チェッカー", en: "Checker", es: "Cuadros" },
   stripe: { ja: "ストライプ", en: "Stripe", es: "Rayas" },
   programming: { ja: "プログラミング", en: "Programming", es: "Programaci\u00f3n" },
