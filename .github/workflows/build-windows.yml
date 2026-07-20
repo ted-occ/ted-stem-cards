@@ -16,7 +16,21 @@ jobs:
           node-version: "22"
 
       - name: Install dependencies (including native modules)
-        run: npm install --include=optional
+        run: npm install --include=optional --foreground-scripts
+
+      - name: Verify native modules built
+        shell: pwsh
+        run: |
+          $checks = @(
+            "node_modules\@pokusew\pcsclite\build\Release\pcsclite.node",
+            "node_modules\better-sqlite3\build\Release\better_sqlite3.node"
+          )
+          $missing = $checks | Where-Object { -not (Test-Path $_) }
+          if ($missing) {
+            $missing | ForEach-Object { Write-Host "##[error]Missing native binary: $_" }
+            throw "Native module build verification failed. optionalDependencies (nfc-pcsc / better-sqlite3) did not build correctly, so the resulting ZIP would silently ship without NFC/DB support."
+          }
+          Write-Host "Native modules verified: nfc-pcsc (pcsclite) and better-sqlite3 built successfully."
 
       - name: Build production app
         run: npm run build
