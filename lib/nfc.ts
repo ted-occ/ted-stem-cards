@@ -243,6 +243,12 @@ function isUriRecord(record: RawNdefRecord): boolean {
   return record.tnf === TNF_WELL_KNOWN && record.type.length === 1 && record.type[0] === 0x55;
 }
 
+// nfc-pcsc の reader.read() は既定でこの単位(16B=4ページ)ごとにREAD BINARY APDUを発行する。
+// 一部のPC/SCリーダー(例: SONY PaSoRi)はLe(要求読取長)がこれ以外だと
+// Status 0x6c10("Wrong length; correct length is 0x10")で拒否するため、
+// 追加読取の要求長は常にこの倍数に切り上げる。
+const READ_PACKET_SIZE = 16;
+
 /** カードの page4 以降を読み、NDEFメッセージ内の全レコードを返す(未解釈のraw形式)。 */
 async function readNdefRecords(reader: any): Promise<RawNdefRecord[]> {
   let buf: Buffer = await reader.read(USER_MEMORY_START_PAGE, INITIAL_READ_BYTES, PAGE_SIZE);
@@ -252,8 +258,9 @@ async function readNdefRecords(reader: any): Promise<RawNdefRecord[]> {
   if (located !== null) {
     const neededBytes = located.offset + 2 + located.length;
     if (neededBytes > buf.length) {
-      const extraPages = Math.ceil(neededBytes / PAGE_SIZE);
-      buf = await reader.read(USER_MEMORY_START_PAGE, extraPages * PAGE_SIZE, PAGE_SIZE);
+      const rawLength = Math.ceil(neededBytes / PAGE_SIZE) * PAGE_SIZE;
+      const readLength = Math.ceil(rawLength / READ_PACKET_SIZE) * READ_PACKET_SIZE;
+      buf = await reader.read(USER_MEMORY_START_PAGE, readLength, PAGE_SIZE);
     }
   }
 
