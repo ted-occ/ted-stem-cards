@@ -1,4 +1,12 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import {
+  decodeNdefMessage,
+  encodeNdefMessage,
+  locateNdefMessageTlv,
+  RawNdefRecord,
+  TNF_WELL_KNOWN,
+} from "./ndef";
+
 let NFC: any;
 try { NFC = require("nfc-pcsc").NFC; } catch { /* not available on Vercel */ }
 const db = (() => {
@@ -186,6 +194,24 @@ export function cancelRegister(): void {
 }
 
 // ---- NDEF URL write to NTAG ----
+// NDEFの汎用レコード/メッセージ組立・解析は lib/ndef.ts に切り出し済み。ここでは
+// 「自分のURIレコード(type='U')だけを追記/置換し、他typeのレコード(例: 別アプリが書く
+// 整理券Textレコード)は保持する」read-modify-write方式を担当する。
+// (参考: waiting-display-demo/lib/nfc.ts のTextレコード版read-modify-writeを踏襲)
+
+const PAGE_SIZE = 4;
+const USER_MEMORY_START_PAGE = 4; // NTAG のユーザーデータは page 4 から
+const INITIAL_READ_BYTES = 64; // 先頭64Bをまず読む。TLV長が超える場合のみ追加読取。
+
+// NTAG機種ごとのユーザーメモリ容量(バイト)。実運用タグは NTAG215。
+const NTAG_CAPACITY_BYTES = {
+  NTAG213: 144,
+  NTAG215: 504,
+  NTAG216: 888,
+} as const;
+const TAG_USER_MEMORY_CAPACITY = NTAG_CAPACITY_BYTES.NTAG215;
+
+const URI_RECORD_TYPE = Buffer.from("U", "ascii"); // type='U' (0x55)
 
 let pendingWrite: {
   url: string;
@@ -194,11 +220,11 @@ let pendingWrite: {
 } | null = null;
 
 /**
- * Build an NDEF message containing a single URI record.
+ * Build the payload for an NDEF URI record.
  * Uses URI prefix 0x04 ("https://") if the url starts with "https://",
  * otherwise 0x03 ("http://"), otherwise 0x00 (no prefix).
  */
-function buildNdefUrlMessage(url: string): Buffer {
+function encodeUriRecordPayload(url: string): Buffer {
   let prefixCode = 0x00;
   let uriBody = url;
   if (url.startsWith("https://")) {
@@ -209,26 +235,29 @@ function buildNdefUrlMessage(url: string): Buffer {
     uriBody = url.slice(7);
   }
 
-  const uriBytes = Buffer.from(uriBody, "utf8");
-  const payloadLength = 1 + uriBytes.length; // prefix byte + uri
+  return Buffer.concat([Buffer.from([prefixCode]), Buffer.from(uriBody, "utf8")]);
+}
 
-  // NDEF record: MB|ME|SR|TNF=well-known(1) = 0xD1
-  const record = Buffer.alloc(3 + 1 + payloadLength);
-  record[0] = 0xd1; // flags
-  record[1] = 0x01; // type length
-  record[2] = payloadLength; // payload length (short record)
-  record[3] = 0x55; // type = 'U' (URI)
-  record[4] = prefixCode;
-  uriBytes.copy(record, 5);
+/** レコードがwell-known type='U'(URIレコード)かどうか判定する。 */
+function isUriRecord(record: RawNdefRecord): boolean {
+  return record.tnf === TNF_WELL_KNOWN && record.type.length === 1 && record.type[0] === 0x55;
+}
 
-  // TLV wrapper: 0x03, length, record, 0xFE terminator
-  const tlv = Buffer.alloc(2 + record.length + 1);
-  tlv[0] = 0x03; // NDEF message TLV
-  tlv[1] = record.length;
-  record.copy(tlv, 2);
-  tlv[2 + record.length] = 0xfe; // terminator
+/** カードの page4 以降を読み、NDEFメッセージ内の全レコードを返す(未解釈のraw形式)。 */
+async function readNdefRecords(reader: any): Promise<RawNdefRecord[]> {
+  let buf: Buffer = await reader.read(USER_MEMORY_START_PAGE, INITIAL_READ_BYTES, PAGE_SIZE);
 
-  return tlv;
+  // 初回読取に収まっていればここで解決。TLV長が読取範囲を超える場合のみ追加読取する。
+  const located = locateNdefMessageTlv(buf);
+  if (located !== null) {
+    const neededBytes = located.offset + 2 + located.length;
+    if (neededBytes > buf.length) {
+      const extraPages = Math.ceil(neededBytes / PAGE_SIZE);
+      buf = await reader.read(USER_MEMORY_START_PAGE, extraPages * PAGE_SIZE, PAGE_SIZE);
+    }
+  }
+
+  return decodeNdefMessage(buf);
 }
 
 /**
@@ -279,15 +308,40 @@ async function handlePendingWrite(reader: any, card: any): Promise<boolean> {
   pendingWrite = null;
 
   try {
-    const ndefData = buildNdefUrlMessage(req.url);
-    const PAGE_SIZE = 4;
-    const startPage = 4; // NTAG user data starts at page 4
+    const uriRecord: RawNdefRecord = {
+      tnf: TNF_WELL_KNOWN,
+      type: URI_RECORD_TYPE,
+      payload: encodeUriRecordPayload(req.url),
+    };
 
-    // Write 4 bytes at a time
-    for (let offset = 0; offset < ndefData.length; offset += PAGE_SIZE) {
-      const page = startPage + offset / PAGE_SIZE;
-      const chunk = Buffer.alloc(PAGE_SIZE, 0);
-      ndefData.copy(chunk, 0, offset, Math.min(offset + PAGE_SIZE, ndefData.length));
+    // read: 既存のNDEFメッセージを読み取り、自分のURIレコード以外(他アプリが書いた
+    // レコード等)を保持したまま、URIレコードだけを置き換える/無ければ追加する。
+    const existingRecords = await readNdefRecords(reader);
+    const uriIndex = existingRecords.findIndex(isUriRecord);
+    const records = [...existingRecords];
+    if (uriIndex >= 0) {
+      records[uriIndex] = uriRecord;
+    } else {
+      records.push(uriRecord);
+    }
+
+    // modify: 全レコードを1つのNDEFメッセージに再構成する。
+    const message = encodeNdefMessage(records);
+
+    // 4バイト境界にパディングしてページ単位で逐次書込する。
+    const paddedLength = Math.ceil(message.length / PAGE_SIZE) * PAGE_SIZE;
+    if (paddedLength > TAG_USER_MEMORY_CAPACITY) {
+      throw new Error(
+        `書込データ(${paddedLength}B)がタグの容量(${TAG_USER_MEMORY_CAPACITY}B)を超えています。`
+      );
+    }
+    const padded = Buffer.alloc(paddedLength, 0);
+    message.copy(padded, 0);
+
+    // write: 再構成したメッセージを書き戻す。
+    for (let offset = 0; offset < padded.length; offset += PAGE_SIZE) {
+      const page = USER_MEMORY_START_PAGE + offset / PAGE_SIZE;
+      const chunk = padded.subarray(offset, offset + PAGE_SIZE);
       await reader.write(page, chunk, PAGE_SIZE);
     }
 
