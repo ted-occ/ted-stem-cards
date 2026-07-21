@@ -63,6 +63,11 @@ Write-Host "[OK] Dependencies installed." -ForegroundColor Green
 
 Write-Host ""
 Write-Host "[3/3] Building production app ..." -ForegroundColor Yellow
+# NEXT_PUBLIC_* はビルド時にクライアントバンドルへ静的に埋め込まれるため、
+# ここで設定しないと NTAG に書き込む replay URL が window.location.origin
+# (=配布先PCのlocalhost) にフォールバックし、スマホから開けなくなる。
+# (参考: .github/workflows/build-windows.yml のCIビルドと同じ値)
+$env:NEXT_PUBLIC_BASE_URL = "https://3dball-hazel.vercel.app"
 & "$NODE_DIR\node.exe" "$NODE_DIR\node_modules\npm\bin\npm-cli.js" run build 2>&1 | ForEach-Object { Write-Host "  $_" }
 if ($LASTEXITCODE -ne 0) {
     Write-Host "[ERROR] Build failed." -ForegroundColor Red
