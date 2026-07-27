@@ -41,7 +41,7 @@
 - `next.config.ts` で `serverExternalPackages: ["nfc-pcsc", "pcsclite", "better-sqlite3"]` を設定。ネイティブ `.node` アドオンをバンドラーから除外。
 - UI パネル (プログラミング・設定) は統一デザイン: 閉じた状態はアイコンのみ、開いた状態はヘッダー (タイトル+閉じるボタン) + ボディ。NFC 接続ステータスはフッターに表示。
 - NTAG 書き込み: プログラミングパネルで作成したプログラムを NDEF URL レコードとして NTAG カードに書き込み。フッターに目立たないセーブアイコン → モーダルダイアログ → ソナーアニメーションで待機。
-- リプレイページ URL エンコーディング: `/replay?p=UUDLRR&c1=4488ff&c2=ffffff&s=20&pt=0&t=1773557770&lv=lv1&sc=2&sr=2&gc=0&gr=0&ch=5&ob=1223&br=12UR` (p=プログラム, c1/c2=色, s=幅, pt=パターン, t=作成日時 Unix秒, lv=レベルID, sc/sr=スタート位置, gc/gr=ゴール位置, ch=お題の移動数, ob=障害物エンコード `"1223"` = col1row2,col2row3, br=分岐セルエンコード)。レベルパラメータはレベルモード時のみ付加。プログラム文字: U/D/L/R/J=方向・ジャンプ, 2/3=x2/x3ループ, B=BRANCH(分岐開始), E=PIPE(else区切り), F=SLASH(分岐終了)。
+- リプレイページ URL エンコーディング: `/replay?p=UUDLRR&c1=4488ff&c2=ffffff&s=20&pt=0&t=1773557770&lv=lv1&sc=2&sr=2&gc=0&gr=0&ch=5&ob=1223&br=12UR&rt=1000-01&rn=5bGx55Sw5aSq6YOO&rs=1000` (p=プログラム, c1/c2=色, s=幅, pt=パターン, t=作成日時 Unix秒, lv=レベルID, sc/sr=スタート位置, gc/gr=ゴール位置, ch=お題の移動数, ob=障害物エンコード `"1223"` = col1row2,col2row3, br=分岐セルエンコード, rt=受付整理番号, rn=受付氏名(UTF-8のbase64url、未発行時は省略), rs=受付時間枠キー)。レベルパラメータはレベルモード時のみ付加、受付パラメータ(rt/rn/rs)は整理券管理アプリ (waiting-display-demo) が書き込んだ場合のみ付加。プログラム文字: U/D/L/R/J=方向・ジャンプ, 2/3=x2/x3ループ, B=BRANCH(分岐開始), E=PIPE(else区切り), F=SLASH(分岐終了)。`p` が空の場合は `lib/reception.ts` の受付情報確認画面 (`ReceptionPanel`) を表示、`p` があればリプレイ画面の上部に受付情報を併記する (`app/replay/page.tsx` の3状態分岐)。
 - `nfc-pcsc` / `better-sqlite3` は `optionalDependencies` に配置し、`lib/nfc.ts` / `lib/db.ts` では動的 `require()` を使用。Vercel 上ではネイティブモジュールが無くてもビルド・デプロイ可能。リプレイページは純粋にクライアントサイドで動作。
 - `NEXT_PUBLIC_BASE_URL` 環境変数で NTAG に書き込む URL のベースドメインを指定 (`.env.local` で設定)。未設定時は `window.location.origin` を使用。
 - NTAG 書き込み成功後のプレビューは常に `localhost` で開く (外部ドメインだとブラウザのポップアップブロックに引っかかるため)。NTAG 自体には `NEXT_PUBLIC_BASE_URL` のドメインが書き込まれる。
@@ -59,7 +59,7 @@
 
 ## Deployment
 
-- **Vercel**: https://3dball-hazel.vercel.app — リプレイページ (`/replay`) のみ公開。ミドルウェアで他ルートをブロック。NFC/SQLite 関連のルートは Vercel 上では動作しない (ネイティブモジュール不在)。
+- **Vercel**: https://ted-stem-cards-ten.vercel.app — リプレイページ (`/replay`) のみ公開。ミドルウェアで他ルートをブロック。NFC/SQLite 関連のルートは Vercel 上では動作しない (ネイティブモジュール不在)。Ted Occ チームの GitHub 組織権限で `TED-Administrator` の個人 Vercel アカウント (`ted-administrators-projects`) 配下にデプロイされている (旧 `3dball-hazel.vercel.app` は個人開発時代の別リポジトリに紐づいたままのため廃止)。
 - **ローカル**: `npm run dev` でフル機能 (NFC リーダー、プログラミング、NTAG 書き込み、リプレイ)。
 - **デプロイ方法**: `vercel --prod` または GitHub push で自動デプロイ。
 
