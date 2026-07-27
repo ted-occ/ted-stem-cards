@@ -1,6 +1,14 @@
+import { Metadata } from "next";
 import { decodeProgram } from "@/lib/ball-shared";
 import { LEVELS, decodeObstacles, decodeBranchCells } from "@/lib/levels";
+import { parseReception } from "@/lib/reception";
 import ReplayScene from "./ReplayScene";
+import ReceptionPanel from "./ReceptionPanel";
+
+// 受付情報(整理番号・氏名)がクエリに含まれるため検索エンジンに拾わせない。
+export const metadata: Metadata = {
+  robots: { index: false, follow: false },
+};
 
 export default async function ReplayPage({
   searchParams,
@@ -23,20 +31,16 @@ export default async function ReplayPage({
   const ch = typeof params.ch === "string" ? params.ch : "";
   const ob = typeof params.ob === "string" ? params.ob : "";
   const br = typeof params.br === "string" ? params.br : "";
+  // Reception params
+  const rt = typeof params.rt === "string" ? params.rt : "";
+  const rn = typeof params.rn === "string" ? params.rn : "";
+  const rs = typeof params.rs === "string" ? params.rs : "";
 
   const steps = decodeProgram(p);
+  const reception = parseReception({ rt, rn, rs });
 
   if (steps.length === 0) {
-    return (
-      <div className="flex items-center justify-center h-screen w-screen bg-[#0d0d14]">
-        <div className="text-center text-white/80 p-8">
-          <p className="text-lg font-bold mb-2">No program specified</p>
-          <p className="text-sm text-white/50">
-            Add a program to the URL, e.g. ?p=UUDLRR
-          </p>
-        </div>
-      </div>
-    );
+    return <ReceptionPanel reception={reception} />;
   }
 
   const hasLevel = sc !== "" && sr !== "" && gc !== "" && gr !== "";
@@ -61,6 +65,7 @@ export default async function ReplayPage({
         goal: { col: Number(gc), row: Number(gr) },
         challenge: ch ? Number(ch) : undefined,
       } : undefined}
+      reception={reception}
     />
   );
 }

@@ -10,6 +10,8 @@ import { GridPos, BranchCell } from "@/lib/levels";
 import { SceneLighting, CameraController, Board, Ground, Sphere, CellMarker, TextSprite, ObstacleMarker, BranchMarker } from "@/app/components/Scene";
 import { playSuccess } from "@/lib/sounds";
 import { useProgramRunner } from "@/lib/useProgramRunner";
+import { useI18n } from "@/lib/i18n";
+import { ReceptionInfo, formatSlotKey } from "@/lib/reception";
 
 interface LevelInfo {
   start: { col: number; row: number };
@@ -28,9 +30,11 @@ interface ReplaySceneProps {
   obstacles?: GridPos[];
   branchCells?: BranchCell[];
   levelInfo?: LevelInfo;
+  reception?: ReceptionInfo | null;
 }
 
-export default function ReplayScene({ steps, color1, color2, scale, pattern, createdAt, gridSize: gridSizeProp, obstacles = [], branchCells = [], levelInfo }: ReplaySceneProps) {
+export default function ReplayScene({ steps, color1, color2, scale, pattern, createdAt, gridSize: gridSizeProp, obstacles = [], branchCells = [], levelInfo, reception }: ReplaySceneProps) {
+  const { t, td } = useI18n();
   const gridSize = gridSizeProp ?? 3;
   const startPos = levelInfo ? levelInfo.start : { col: 1, row: 1 };
   const runner = useProgramRunner();
@@ -46,6 +50,10 @@ export default function ReplayScene({ steps, color1, color2, scale, pattern, cre
     color2: color2 || "#ffffff",
     scale: scale ?? 20,
   };
+
+  // levelInfo に levelId は含まれないため、盤面の特徴から逆算する。
+  const themeKey = branchCells.length > 0 ? "lv3Theme" : obstacles.length > 0 ? "lv2Theme" : "lv1Theme";
+  const challengeThemeKey = branchCells.length > 0 ? "lv3ChallengeTheme" : obstacles.length > 0 ? "lv2ChallengeTheme" : "lv1ChallengeTheme";
 
   // Auto-scroll to highlighted step
   useEffect(() => {
@@ -131,19 +139,27 @@ export default function ReplayScene({ steps, color1, color2, scale, pattern, cre
               )}
               <span className="text-xs text-yellow-300/70">
                 {levelInfo.challenge != null
-                  ? `${levelInfo.challenge} moves${obstacles.length > 0 ? ", avoid obstacles!" : " to the Goal!"}`
-                  : (obstacles.length > 0 ? "Avoid obstacles!" : "Reach the Goal!")}
+                  ? `${levelInfo.challenge}${td(challengeThemeKey)}`
+                  : td(themeKey)}
                 {levelCleared && " ✓"}
               </span>
             </div>
           ) : (
-            <span className="text-xs text-white/40">{steps.length} steps</span>
+            <span className="text-xs text-white/40">{steps.length} {t("steps")}</span>
           )}
         </div>
       </div>
 
-      {/* Top bar — created date (left) + replay button (center) */}
-      <div className="absolute top-4 left-4 right-4 z-20 flex items-center">
+      {/* Top bar — reception strip + created date (left) + replay button (center) */}
+      <div className="absolute top-0 left-0 right-0 z-20">
+        {reception && (
+          <div className="bg-black/40 px-4 py-1.5 text-center text-xs text-white/80 backdrop-blur">
+            <span className="font-bold">{reception.ticketNumber}</span>
+            {reception.name && <span className="ml-2">{reception.name}</span>}
+            <span className="ml-2 text-white/50">{formatSlotKey(reception.slotKey)}</span>
+          </div>
+        )}
+        <div className="flex items-center px-4 pt-4">
         {/* Created date */}
         <div className="text-xs text-white/50">
           {createdAt ? (() => {
@@ -161,7 +177,7 @@ export default function ReplayScene({ steps, color1, color2, scale, pattern, cre
                 onClick={() => runProgram(false)}
                 className="rounded-xl bg-white/95 px-6 py-3 text-base font-bold text-black shadow-xl backdrop-blur border border-gray-200 transition hover:bg-white hover:scale-105"
               >
-                Replay
+                {t("replayAgain")}
               </button>
               {hasBranch && (
                 <button
@@ -184,6 +200,7 @@ export default function ReplayScene({ steps, color1, color2, scale, pattern, cre
         >
           {is2D ? "3D" : "2D"}
         </button>
+        </div>
       </div>
 
       <Canvas camera={{ position: [0, 5, 5], fov: 45 }} gl={{ antialias: true }} shadows>

@@ -56,7 +56,16 @@ const translations = {
   replay: { ja: "リプレイ", en: "Replay", es: "Repetir" },
   replayAgain: { ja: "もう一度見る", en: "Watch Again", es: "Ver de nuevo" },
   noProgram: { ja: "プログラムが指定されていません", en: "No program specified", es: "No se especific\u00f3 un programa" },
+  noProgramHint: { ja: "URLに ?p=UUDLRR のようにプログラムを追加してください", en: "Add a program to the URL, e.g. ?p=UUDLRR", es: "Agrega un programa a la URL, p. ej. ?p=UUDLRR" },
   steps: { ja: "ステップ", en: "steps", es: "pasos" },
+
+  // Reception (受付情報)
+  receptionTitle: { ja: "受付ずみ！", en: "Checked In!", es: "¡Registrado!" },
+  receptionTicket: { ja: "整理番号", en: "Ticket No.", es: "Número de ticket" },
+  receptionName: { ja: "おなまえ", en: "Name", es: "Nombre" },
+  receptionSlot: { ja: "じかん", en: "Time slot", es: "Franja horaria" },
+  receptionGuide: { ja: "このあと プログラミングに ちょうせんしよう！", en: "Try programming next!", es: "¡Ahora prueba la programación!" },
+  receptionNote: { ja: "カードは たいけんが おわるまで だいじにもってね", en: "Keep your card until your experience is done", es: "Guarda tu tarjeta hasta terminar la experiencia" },
 
   // Lv1 mode
   lv1: { ja: "Lv1", en: "Lv1", es: "Lv1" },
