@@ -6,6 +6,7 @@ import {
   RawNdefRecord,
   TNF_WELL_KNOWN,
 } from "./ndef";
+import { readTicketFromRecords, applyReceptionParams } from "./reception";
 
 let NFC: any;
 try { NFC = require("nfc-pcsc").NFC; } catch { /* not available on Vercel */ }
@@ -243,6 +244,39 @@ function isUriRecord(record: RawNdefRecord): boolean {
   return record.tnf === TNF_WELL_KNOWN && record.type.length === 1 && record.type[0] === 0x55;
 }
 
+// NDEFメッセージ全体が254B(lib/ndef.tsの実効上限)を超えた場合、優先度の低い順に
+// パラメータを落として再試行する。p(プログラム本体)とレベルパラメータ
+// (lv/sc/sr/gc/gr/ch/ob/br)、受付の整理番号(rt)は最後まで残す。
+const DEGRADE_PARAM_ORDER = ["t", "pt", "s", "c2", "c1", "rn", "rs"] as const;
+
+/**
+ * URIレコードを先頭に、他のレコード(整理券Textレコード等)をそれに続けてエンコードする。
+ * Androidのタグディスパッチは最初のレコードでIntentを決めるため、URIレコードは
+ * 必ず先頭に置く(他アプリが先に書いたためTextが先頭になっているカードでも正規化する)。
+ * 254B上限を超える場合は DEGRADE_PARAM_ORDER の順にクエリパラメータを削って再試行し、
+ * それでも収まらなければ例外を投げる。
+ */
+function encodeWithDegrade(url: URL, otherRecords: RawNdefRecord[]): Buffer {
+  for (let removed = 0; removed <= DEGRADE_PARAM_ORDER.length; removed++) {
+    if (removed > 0) {
+      url.searchParams.delete(DEGRADE_PARAM_ORDER[removed - 1]);
+    }
+    const uriRecord: RawNdefRecord = {
+      tnf: TNF_WELL_KNOWN,
+      type: URI_RECORD_TYPE,
+      payload: encodeUriRecordPayload(url.toString()),
+    };
+    try {
+      return encodeNdefMessage([uriRecord, ...otherRecords]);
+    } catch {
+      // 254B超過(またはURIレコード単体が255Bを超え短レコードで表現できない)。
+      // 次の削除段階へ進む。
+      continue;
+    }
+  }
+  throw new Error("プログラムが長すぎるため、NTAGに書き込めません。");
+}
+
 // nfc-pcsc の reader.read() は既定でこの単位(16B=4ページ)ごとにREAD BINARY APDUを発行する。
 // 一部のPC/SCリーダー(例: SONY PaSoRi)はLe(要求読取長)がこれ以外だと
 // Status 0x6c10("Wrong length; correct length is 0x10")で拒否するため、
@@ -315,25 +349,23 @@ async function handlePendingWrite(reader: any, card: any): Promise<boolean> {
   pendingWrite = null;
 
   try {
-    const uriRecord: RawNdefRecord = {
-      tnf: TNF_WELL_KNOWN,
-      type: URI_RECORD_TYPE,
-      payload: encodeUriRecordPayload(req.url),
-    };
-
     // read: 既存のNDEFメッセージを読み取り、自分のURIレコード以外(他アプリが書いた
-    // レコード等)を保持したまま、URIレコードだけを置き換える/無ければ追加する。
+    // レコード等、整理券Textレコードを含む)を保持する。
     const existingRecords = await readNdefRecords(reader);
-    const uriIndex = existingRecords.findIndex(isUriRecord);
-    const records = [...existingRecords];
-    if (uriIndex >= 0) {
-      records[uriIndex] = uriRecord;
-    } else {
-      records.push(uriRecord);
+    const otherRecords = existingRecords.filter((r) => !isUriRecord(r));
+
+    // 整理券管理アプリが書いたTextレコードから受付情報を復元し、URLに引き継ぐ。
+    // 書込元(Ball.tsx)ではなくカード上の現在のTextレコードを正として使うことで、
+    // 書込を何度重ねても・どのカードでも常に最新の受付情報が反映される。
+    const url = new URL(req.url);
+    const ticket = readTicketFromRecords(existingRecords);
+    if (ticket) {
+      applyReceptionParams(url, ticket);
     }
 
-    // modify: 全レコードを1つのNDEFメッセージに再構成する。
-    const message = encodeNdefMessage(records);
+    // modify: URIレコードを先頭に正規化しつつ、254B上限に収まるよう必要なら
+    // 優先度の低いパラメータから削って再構成する。
+    const message = encodeWithDegrade(url, otherRecords);
 
     // 4バイト境界にパディングしてページ単位で逐次書込する。
     const paddedLength = Math.ceil(message.length / PAGE_SIZE) * PAGE_SIZE;
@@ -352,7 +384,7 @@ async function handlePendingWrite(reader: any, card: any): Promise<boolean> {
       await reader.write(page, chunk, PAGE_SIZE);
     }
 
-    console.log(`[NFC] NDEF URL written to card UID=${card.uid}: ${req.url}`);
+    console.log(`[NFC] NDEF URL written to card UID=${card.uid}: ${url.toString()}`);
     req.resolve();
   } catch (err: any) {
     console.error(`[NFC] NDEF write failed:`, err);
