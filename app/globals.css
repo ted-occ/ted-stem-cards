@@ -24,3 +24,35 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* ── 受付画面(app/replay/ReceptionPanel.tsx)専用モーション ── */
+@theme {
+  --animate-ticket-sheen: ticket-sheen 1.6s ease-out 0.75s 1 both;
+  --animate-check-draw: check-draw 0.5s ease-out 0.35s 1 both;
+  --animate-check-halo: check-halo 2.8s ease-out 0.9s infinite;
+}
+
+@keyframes ticket-sheen {
+  from { transform: translateX(-150%) skewX(-18deg); opacity: 0; }
+  30%  { opacity: 1; }
+  to   { transform: translateX(400%) skewX(-18deg); opacity: 0; }
+}
+
+@keyframes check-draw {
+  from { stroke-dashoffset: 1; }
+  to   { stroke-dashoffset: 0; }
+}
+
+@keyframes check-halo {
+  0%   { transform: scale(0.92); opacity: 0.5; }
+  70%  { transform: scale(1.7);  opacity: 0; }
+  100% { transform: scale(1.7);  opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

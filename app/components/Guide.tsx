@@ -98,7 +98,7 @@ function IconCode({ className = "w-4 h-4" }: { className?: string }) {
   );
 }
 
-function IconBall({ className = "w-8 h-8" }: { className?: string }) {
+export function IconBall({ className = "w-8 h-8" }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
       <circle cx="12" cy="12" r="10" />
