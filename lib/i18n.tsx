@@ -55,17 +55,18 @@ const translations = {
   // Replay page
   replay: { ja: "リプレイ", en: "Replay", es: "Repetir" },
   replayAgain: { ja: "もう一度見る", en: "Watch Again", es: "Ver de nuevo" },
-  noProgram: { ja: "プログラムが指定されていません", en: "No program specified", es: "No se especific\u00f3 un programa" },
-  noProgramHint: { ja: "URLに ?p=UUDLRR のようにプログラムを追加してください", en: "Add a program to the URL, e.g. ?p=UUDLRR", es: "Agrega un programa a la URL, p. ej. ?p=UUDLRR" },
+  noProgram: { ja: "カード情報を読み取れませんでした", en: "Card information not found", es: "No se encontr\u00f3 la informaci\u00f3n de la tarjeta" },
+  noProgramHint: { ja: "受付スタッフにお声がけください", en: "Please ask a staff member for assistance", es: "Por favor, avise a un miembro del personal" },
   steps: { ja: "ステップ", en: "steps", es: "pasos" },
 
   // Reception (受付情報)
-  receptionTitle: { ja: "受付ずみ！", en: "Checked In!", es: "¡Registrado!" },
-  receptionTicket: { ja: "整理番号", en: "Ticket No.", es: "Número de ticket" },
-  receptionName: { ja: "おなまえ", en: "Name", es: "Nombre" },
-  receptionSlot: { ja: "じかん", en: "Time slot", es: "Franja horaria" },
-  receptionGuide: { ja: "このあと プログラミングに ちょうせんしよう！", en: "Try programming next!", es: "¡Ahora prueba la programación!" },
-  receptionNote: { ja: "カードは たいけんが おわるまで だいじにもってね", en: "Keep your card until your experience is done", es: "Guarda tu tarjeta hasta terminar la experiencia" },
+  receptionTitle: { ja: "受付完了", en: "Check-in Complete", es: "Registro completado" },
+  receptionEventTagline: { ja: "STEM プログラミング体験", en: "STEM Programming Workshop", es: "Taller de programaci\u00f3n STEM" },
+  receptionTicket: { ja: "整理番号", en: "Ticket No.", es: "N.\u00ba de ticket" },
+  receptionName: { ja: "お名前", en: "Name", es: "Nombre" },
+  receptionSlot: { ja: "体験時間", en: "Time Slot", es: "Horario" },
+  receptionGuide: { ja: "この後、プログラミング体験にご案内します", en: "Your programming session is coming up next.", es: "A continuaci\u00f3n, su sesi\u00f3n de programaci\u00f3n." },
+  receptionNote: { ja: "カードは体験終了までお持ちください", en: "Please keep this card until your session ends.", es: "Conserve la tarjeta hasta finalizar la sesi\u00f3n." },
 
   // Lv1 mode
   lv1: { ja: "Lv1", en: "Lv1", es: "Lv1" },
