@@ -1,8 +1,6 @@
 name: Build Windows Portable ZIP
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 jobs:
@@ -35,7 +33,7 @@ jobs:
       - name: Build production app
         run: npm run build
         env:
-          NEXT_PUBLIC_BASE_URL: https://3dball-hazel.vercel.app
+          NEXT_PUBLIC_BASE_URL: https://ted-stem-cards-ten.vercel.app
 
       - name: Download Node.js portable
         shell: pwsh
